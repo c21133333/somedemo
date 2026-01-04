@@ -1,0 +1,4 @@
+{
+    "python.defaultInterpreterPath": "python",
+    "python.testing.pytestEnabled": true
+}

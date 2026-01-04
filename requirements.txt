@@ -1,0 +1,6 @@
+# Add your dependencies here
+# Example: requests==2.25.1
+pytest
+pynput
+pyautogui
+pyinstaller
