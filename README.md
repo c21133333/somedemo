@@ -5,7 +5,7 @@ This is a basic Python project scaffold.
 ## Setup
 
 1. Install dependencies: `pip install -r requirements.txt`
-2. Run the project: `python src/main.py`
+2. Run the project: `python -m somedemo.mouse_recorder`
 
 ## Usage
 
@@ -13,7 +13,8 @@ Describe how to use the project here.
 
 ## Mouse Recorder Tool
 
-Run the GUI mouse recorder: `python src/mouse_recorder.py`
+Run the GUI mouse recorder: `python -m somedemo.mouse_recorder`
+Run the Qt GUI recorder: `python scripts/run_qt.py`
 
 - Click "开始录制 (Ctrl+S)" to begin recording mouse trajectory and clicks.
 - Click "结束录制 (Ctrl+E)" to stop and save to trajectory.json.
@@ -32,7 +33,7 @@ If trajectory.json is missing or corrupted, an error dialog will appear.
 
 ## Building Executable
 
-To build a standalone executable: `pyinstaller --onefile src/mouse_recorder.py`
+To build a standalone executable: `pyinstaller --onefile src/somedemo/mouse_recorder.py`
 
 The executable will be in the dist/ folder.
 

@@ -4,3 +4,5 @@ pytest
 pynput
 pyautogui
 pyinstaller
+PySide6
+pytesseract

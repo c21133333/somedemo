@@ -1,10 +1,10 @@
 import unittest
-from src.main import main
+
+import somedemo
 
 class TestMain(unittest.TestCase):
     def test_main(self):
-        # Add test logic here
-        pass
+        self.assertTrue(hasattr(somedemo, "__package__"))
 
 if __name__ == '__main__':
     unittest.main()

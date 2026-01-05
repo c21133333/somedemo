@@ -1,8 +1,9 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="my-python-project",
+    name="somedemo",
     version="0.1.0",
-    packages=find_packages(),
+    package_dir={"": "src"},
+    packages=find_packages("src"),
     install_requires=[],
 )

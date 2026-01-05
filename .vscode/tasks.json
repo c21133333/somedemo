@@ -6,7 +6,8 @@
 			"type": "shell",
 			"command": "python",
 			"args": [
-				"src/main.py"
+				"-m",
+				"somedemo.mouse_recorder"
 			],
 			"isBackground": false,
 			"group": "build"
