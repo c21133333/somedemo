@@ -202,7 +202,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.template_thumb_list.setSpacing(8)
         self.template_thumb_list.setMinimumHeight(120)
         self.template_thumb_list.setStyleSheet(
-            "QListWidget { border: 1px solid rgba(120, 180, 255, 0.25); border-radius: 8px; }"
+            "QListWidget { background: transparent; border: 1px solid rgba(120, 180, 255, 0.25); border-radius: 8px; }"
+            "QListWidget::item { background: transparent; }"
         )
         self.template_thumb_list.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.template_thumb_list.installEventFilter(self)
@@ -476,6 +477,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 border-radius: 10px;
                 color: #c9d6ea;
                 padding: 8px;
+            }
+            QGroupBox::title {
+                color: #f0f6ff;
             }
             """
         )
