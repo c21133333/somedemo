@@ -6,3 +6,6 @@ pyautogui
 pyinstaller
 PySide6
 pytesseract
+mss
+numpy
+opencv-python

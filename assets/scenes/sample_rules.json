@@ -1,0 +1,32 @@
+[
+  {
+    "name": "main_menu",
+    "type": "template",
+    "template": "assets/templates/menu_button.png",
+    "threshold": 0.92,
+    "region": [20, 20, 300, 200],
+    "method": "TM_CCOEFF_NORMED",
+    "cooldown": 1.5,
+    "action": {
+      "type": "click",
+      "x": 40,
+      "y": 40,
+      "delay": 1.0
+    }
+  },
+  {
+    "name": "battle_ready",
+    "type": "color",
+    "region": [800, 900, 120, 60],
+    "lower": [0, 200, 0],
+    "upper": [80, 255, 80],
+    "ratio": 0.85,
+    "cooldown": 1.5,
+    "action": {
+      "type": "double_click",
+      "x": 20,
+      "y": 20,
+      "delay": 1.0
+    }
+  }
+]

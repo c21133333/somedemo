@@ -1,0 +1,18 @@
+﻿{
+  "templates": [
+    {
+      "name": "confirm_button",
+      "path": "confirm.png",
+      "threshold": 0.85,
+      "click": {
+        "type": "left",
+        "offset_x": 0,
+        "offset_y": 0,
+        "delay_ms": 300,
+        "click_count": 2,
+        "interval_ms": 400,
+        "cooldown_ms": 1500
+      }
+    }
+  ]
+}
