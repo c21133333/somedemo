@@ -877,6 +877,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
 def run():
     app = QtWidgets.QApplication([])
+    icon_path = _resource_path(os.path.join("assets", "icons", "app.ico"))
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QtGui.QIcon(icon_path))
     window = MainWindow()
     window.show()
     app.exec()
