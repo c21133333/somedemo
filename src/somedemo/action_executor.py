@@ -1,4 +1,3 @@
-import random
 import time
 from typing import Any, Dict, Optional, Tuple
 
@@ -9,6 +8,8 @@ from pynput import keyboard
 ActionConfig = Dict[str, Any]
 
 _last_action_ts: Dict[str, float] = {}
+# Adjust this to the fixed click position within the matched template.
+CLICK_OFFSET = (0, 0)
 
 
 def _apply_region(
@@ -20,6 +21,21 @@ def _apply_region(
     x, y = point
     rx, ry, _, _ = region
     return x + rx, y + ry
+
+
+def _clamp_to_region(
+    point: Tuple[int, int],
+    region: Optional[Tuple[int, int, int, int]],
+) -> Tuple[int, int]:
+    if not region:
+        return point
+    x, y = point
+    rx, ry, rw, rh = region
+    max_x = rx + max(0, rw - 1)
+    max_y = ry + max(0, rh - 1)
+    x = min(max(x, rx), max_x)
+    y = min(max(y, ry), max_y)
+    return x, y
 
 
 def execute(action_config: ActionConfig) -> bool:
@@ -88,6 +104,36 @@ def execute(action_config: ActionConfig) -> bool:
         listener.stop()
 
 
+def compute_click_point(
+    match_result: Dict[str, Any],
+    region: Optional[Tuple[int, int, int, int]],
+    click_cfg: Dict[str, Any],
+) -> Tuple[int, int]:
+    base_x = int(match_result["x"])
+    base_y = int(match_result["y"])
+    offset_x = int(click_cfg.get("offset_x", 0)) + int(CLICK_OFFSET[0])
+    offset_y = int(click_cfg.get("offset_y", 0)) + int(CLICK_OFFSET[1])
+
+    x = base_x + offset_x
+    y = base_y + offset_y
+
+    if region:
+        x, y = _apply_region((x, y), region)
+        x, y = _clamp_to_region((x, y), region)
+
+    coord_scale = click_cfg.get("coord_scale")
+    if coord_scale and isinstance(coord_scale, (list, tuple)) and len(coord_scale) == 2:
+        try:
+            scale_x = float(coord_scale[0]) or 1.0
+            scale_y = float(coord_scale[1]) or 1.0
+            if scale_x > 0 and scale_y > 0:
+                x = int(round(x / scale_x))
+                y = int(round(y / scale_y))
+        except Exception:
+            pass
+    return x, y
+
+
 def execute_match(
     match_result: Dict[str, Any],
     region: Optional[Tuple[int, int, int, int]],
@@ -103,26 +149,11 @@ def execute_match(
         if now - last < cooldown_ms / 1000.0:
             return False
 
-    offset_x = int(click_cfg.get("offset_x", 0))
-    offset_y = int(click_cfg.get("offset_y", 0))
     delay_ms = int(click_cfg.get("delay_ms", 0))
     click_type = str(click_cfg.get("type", "left")).lower()
     click_count = int(click_cfg.get("click_count", 1))
     interval_ms = int(click_cfg.get("interval_ms", 0))
-
-    x = int(match_result["x"]) + int(match_result["width"]) // 2 + offset_x
-    y = int(match_result["y"]) + int(match_result["height"]) // 2 + offset_y
-    if bool(click_cfg.get("random_offset", True)):
-        rand_x = random.randint(
-            -int(match_result["width"]) // 2, int(match_result["width"]) // 2
-        )
-        rand_y = random.randint(
-            -int(match_result["height"]) // 2, int(match_result["height"]) // 2
-        )
-        x += rand_x
-        y += rand_y
-    if region:
-        x, y = _apply_region((x, y), region)
+    x, y = compute_click_point(match_result, region, click_cfg)
 
     action_type = "click"
     button = "left"

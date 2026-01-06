@@ -26,7 +26,10 @@ class RegionSelector(QtWidgets.QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        self.showFullScreen()
+        screen = QtGui.QGuiApplication.primaryScreen()
+        if screen:
+            self.setGeometry(screen.virtualGeometry())
+        self.show()
 
     def paintEvent(self, event):
         painter = QtGui.QPainter(self)
@@ -55,7 +58,10 @@ class RegionSelector(QtWidgets.QWidget):
         self._rubber_band.hide()
         self._origin = None
         if rect.width() > 0 and rect.height() > 0:
-            region = self._to_physical_region(rect)
+            global_rect = QtCore.QRect(
+                rect.topLeft() + self.geometry().topLeft(), rect.size()
+            )
+            region = self._to_physical_region(global_rect)
             self.region_selected.emit(region)
         self.close()
 
@@ -68,10 +74,11 @@ class RegionSelector(QtWidgets.QWidget):
         super().closeEvent(event)
 
     def _to_physical_region(self, rect: QtCore.QRect) -> Tuple[int, int, int, int]:
-        screen = self.screen()
+        screen = QtGui.QGuiApplication.screenAt(rect.center())
         if not screen:
             return rect.x(), rect.y(), rect.width(), rect.height()
-        screen_size = screen.size()
+        screen_geom = screen.geometry()
+        screen_size = screen_geom.size()
         if screen_size.width() <= 0 or screen_size.height() <= 0:
             return rect.x(), rect.y(), rect.width(), rect.height()
         physical = _get_monitor_physical_rect(screen.name())
@@ -80,8 +87,10 @@ class RegionSelector(QtWidgets.QWidget):
         left, top, width, height = physical
         scale_x = width / max(1, screen_size.width())
         scale_y = height / max(1, screen_size.height())
-        phys_x = left + int(round(rect.x() * scale_x))
-        phys_y = top + int(round(rect.y() * scale_y))
+        rel_x = rect.x() - screen_geom.x()
+        rel_y = rect.y() - screen_geom.y()
+        phys_x = left + int(round(rel_x * scale_x))
+        phys_y = top + int(round(rel_y * scale_y))
         phys_w = int(round(rect.width() * scale_x))
         phys_h = int(round(rect.height() * scale_y))
         return phys_x, phys_y, phys_w, phys_h
@@ -158,6 +167,54 @@ def select_region() -> Optional[Tuple[int, int, int, int]]:
     if owns_app:
         app.processEvents()
     return result["region"]
+
+
+def physical_to_logical_region(
+    region: Optional[Tuple[int, int, int, int]],
+) -> Optional[Tuple[int, int, int, int]]:
+    if not region:
+        return None
+    x, y, w, h = region
+    cx = x + w // 2
+    cy = y + h // 2
+    for screen in QtGui.QGuiApplication.screens():
+        physical = _get_monitor_physical_rect(screen.name())
+        if not physical:
+            continue
+        left, top, pw, ph = physical
+        if left <= cx < left + pw and top <= cy < top + ph:
+            geom = screen.geometry()
+            scale_x = pw / max(1, geom.width())
+            scale_y = ph / max(1, geom.height())
+            rel_x = x - left
+            rel_y = y - top
+            log_x = geom.x() + int(round(rel_x / scale_x))
+            log_y = geom.y() + int(round(rel_y / scale_y))
+            log_w = int(round(w / scale_x))
+            log_h = int(round(h / scale_y))
+            return log_x, log_y, log_w, log_h
+    return x, y, w, h
+
+
+def get_monitor_scale_for_region(
+    region: Optional[Tuple[int, int, int, int]],
+) -> Tuple[float, float]:
+    if not region:
+        return 1.0, 1.0
+    x, y, w, h = region
+    cx = x + w // 2
+    cy = y + h // 2
+    for screen in QtGui.QGuiApplication.screens():
+        physical = _get_monitor_physical_rect(screen.name())
+        if not physical:
+            continue
+        left, top, pw, ph = physical
+        if left <= cx < left + pw and top <= cy < top + ph:
+            geom = screen.geometry()
+            scale_x = pw / max(1, geom.width())
+            scale_y = ph / max(1, geom.height())
+            return scale_x, scale_y
+    return 1.0, 1.0
 
 
 if __name__ == "__main__":
