@@ -1,3 +1,4 @@
+import sys
 from typing import Optional, Tuple
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -54,9 +55,8 @@ class RegionSelector(QtWidgets.QWidget):
         self._rubber_band.hide()
         self._origin = None
         if rect.width() > 0 and rect.height() > 0:
-            self.region_selected.emit(
-                (rect.x(), rect.y(), rect.width(), rect.height())
-            )
+            region = self._to_physical_region(rect)
+            self.region_selected.emit(region)
         self.close()
 
     def keyPressEvent(self, event):
@@ -66,6 +66,74 @@ class RegionSelector(QtWidgets.QWidget):
     def closeEvent(self, event):
         self.finished.emit()
         super().closeEvent(event)
+
+    def _to_physical_region(self, rect: QtCore.QRect) -> Tuple[int, int, int, int]:
+        screen = self.screen()
+        if not screen:
+            return rect.x(), rect.y(), rect.width(), rect.height()
+        screen_size = screen.size()
+        if screen_size.width() <= 0 or screen_size.height() <= 0:
+            return rect.x(), rect.y(), rect.width(), rect.height()
+        physical = _get_monitor_physical_rect(screen.name())
+        if not physical:
+            return rect.x(), rect.y(), rect.width(), rect.height()
+        left, top, width, height = physical
+        scale_x = width / max(1, screen_size.width())
+        scale_y = height / max(1, screen_size.height())
+        phys_x = left + int(round(rect.x() * scale_x))
+        phys_y = top + int(round(rect.y() * scale_y))
+        phys_w = int(round(rect.width() * scale_x))
+        phys_h = int(round(rect.height() * scale_y))
+        return phys_x, phys_y, phys_w, phys_h
+
+
+def _get_monitor_physical_rect(name: str) -> Optional[Tuple[int, int, int, int]]:
+    if not name or sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        import ctypes.wintypes
+    except Exception:
+        return None
+
+    user32 = ctypes.windll.user32
+
+    class MONITORINFOEX(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", ctypes.wintypes.DWORD),
+            ("rcMonitor", ctypes.wintypes.RECT),
+            ("rcWork", ctypes.wintypes.RECT),
+            ("dwFlags", ctypes.wintypes.DWORD),
+            ("szDevice", ctypes.wintypes.WCHAR * 32),
+        ]
+
+    monitors = []
+
+    def _callback(hmonitor, hdc, lprc, lparam):
+        info = MONITORINFOEX()
+        info.cbSize = ctypes.sizeof(MONITORINFOEX)
+        if user32.GetMonitorInfoW(hmonitor, ctypes.byref(info)):
+            rect = info.rcMonitor
+            monitors.append(
+                (info.szDevice, rect.left, rect.top, rect.right, rect.bottom)
+            )
+        return 1
+
+    cb = ctypes.WINFUNCTYPE(
+        ctypes.wintypes.BOOL,
+        ctypes.wintypes.HMONITOR,
+        ctypes.wintypes.HDC,
+        ctypes.POINTER(ctypes.wintypes.RECT),
+        ctypes.wintypes.LPARAM,
+    )(_callback)
+
+    if not user32.EnumDisplayMonitors(0, 0, cb, 0):
+        return None
+
+    for dev, left, top, right, bottom in monitors:
+        if dev == name:
+            return left, top, right - left, bottom - top
+    return None
 
 
 def select_region() -> Optional[Tuple[int, int, int, int]]:

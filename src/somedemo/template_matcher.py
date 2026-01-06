@@ -14,6 +14,21 @@ class TemplateMatcher:
     def __init__(self, templates: List[TemplateConfig]):
         self._templates = templates
 
+    def describe(self) -> List[Dict[str, int]]:
+        summary: List[Dict[str, int]] = []
+        for tmpl in self._templates:
+            image = tmpl.get("image")
+            if image is None:
+                continue
+            summary.append(
+                {
+                    "name": str(tmpl.get("name", "")),
+                    "width": int(image.shape[1]),
+                    "height": int(image.shape[0]),
+                }
+            )
+        return summary
+
     @classmethod
     def load_from_paths(
         cls, paths: List[str], threshold: float = 0.85

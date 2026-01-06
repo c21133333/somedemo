@@ -1,8 +1,22 @@
 import os
 import sys
+import ctypes
 
 
 def main():
+    if sys.platform == "win32":
+        try:
+            ctypes.windll.user32.SetProcessDpiAwarenessContext(
+                ctypes.wintypes.HANDLE(-4)
+            )
+        except Exception:
+            try:
+                ctypes.windll.shcore.SetProcessDpiAwareness(2)
+            except Exception:
+                try:
+                    ctypes.windll.user32.SetProcessDPIAware()
+                except Exception:
+                    pass
     os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.window=false")
     if hasattr(sys, "_MEIPASS"):
         repo_root = sys._MEIPASS

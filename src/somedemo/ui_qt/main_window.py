@@ -67,6 +67,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._last_scene_ts = 0.0
         self._action_lock = threading.Lock()
         self._action_inflight = False
+        self._capture_debug_logged = False
 
         self._last_dt = None
 
@@ -685,6 +686,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._template_matcher = TemplateMatcher.load_from_paths(
             self._template_paths, threshold=threshold
         )
+        summary = self._template_matcher.describe()
+        if summary:
+            items = ", ".join(
+                f"{item['name']}:{item['width']}x{item['height']}" for item in summary
+            )
+            self._signals.log_signal.emit(f"\u6a21\u677f\u5c3a\u5bf8: {items}")
         return True
 
     def _select_template_images(self):
@@ -766,6 +773,7 @@ class MainWindow(QtWidgets.QMainWindow):
             fps=fps,
             frame_callback=self._on_frame,
         )
+        self._capture_debug_logged = False
         self._auto_capture.start()
         self._auto_running = True
         self._signals.log_signal.emit("\u81ea\u52a8\u76d1\u63a7\u5df2\u5f00\u59cb\u3002")
@@ -794,6 +802,12 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_frame(self, frame):
         if not self._auto_running or self._auto_paused:
             return
+        if not self._capture_debug_logged:
+            height, width = frame.shape[:2]
+            self._signals.log_signal.emit(
+                f"\u76d1\u63a7\u5e27\u5c3a\u5bf8: {width}x{height} region={self._auto_region}"
+            )
+            self._capture_debug_logged = True
         if self._template_matcher:
             match = self._template_matcher.match(frame)
             if match:
