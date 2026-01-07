@@ -19,6 +19,7 @@ from somedemo.region_selector import (
 from somedemo.scene_matcher import load_scene_rules, match_scene
 from somedemo.screen_capture import ScreenCapture
 from somedemo.template_matcher import TemplateMatcher
+from somedemo.template_monitor import capture_program_template, ensure_dpi_aware
 
 
 def _resource_path(filename):
@@ -278,6 +279,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "QToolButton:hover { background: #16a34a; }"
         )
         self.template_add_btn.raise_()
+
         self._reposition_add_button()
 
         template_group_layout.addWidget(self.template_thumb_list)
@@ -287,9 +289,9 @@ class MainWindow(QtWidgets.QMainWindow):
         template_threshold_layout = QtWidgets.QHBoxLayout()
         threshold_label = QtWidgets.QLabel("\u6a21\u677f\u5339\u914d\u9608\u503c:")
         self.template_threshold_spin = QtWidgets.QDoubleSpinBox()
-        self.template_threshold_spin.setRange(0.65, 0.75)
+        self.template_threshold_spin.setRange(0.90, 0.99)
         self.template_threshold_spin.setSingleStep(0.01)
-        self.template_threshold_spin.setValue(0.70)
+        self.template_threshold_spin.setValue(0.90)
         template_threshold_layout.addWidget(threshold_label)
         template_threshold_layout.addWidget(self.template_threshold_spin)
         template_threshold_layout.addStretch(1)
@@ -353,7 +355,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.mode_monitor_btn.clicked.connect(self._show_monitor_mode)
         self.mode_recorder_btn.clicked.connect(self._show_recorder_mode)
         # CHANGE: template config handler
-        self.template_add_btn.clicked.connect(self._select_template_images)
+        self.template_add_btn.clicked.connect(self._select_template_source)
         self.template_thumb_list.customContextMenuRequested.connect(
             self._show_template_menu
         )
@@ -816,6 +818,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self._signals.log_signal.emit(f"\u6a21\u677f\u5c3a\u5bf8: {items}")
         return True
 
+    def _select_template_source(self):
+        menu = QtWidgets.QMenu(self)
+        local_action = menu.addAction("\u4ece\u672c\u5730\u9009\u62e9\u56fe\u7247")
+        capture_action = menu.addAction("\u7a0b\u5e8f\u622a\u56fe\u91c7\u96c6")
+        action = menu.exec(self.template_add_btn.mapToGlobal(QtCore.QPoint(0, 40)))
+        if action == local_action:
+            self._select_template_images()
+        elif action == capture_action:
+            self._capture_template_image()
+
     def _select_template_images(self):
         paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
             self,
@@ -825,27 +837,51 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         if not paths:
             return
-        existing = set(self._template_paths)
         for path in paths:
-            if path in existing:
-                continue
-            pixmap = QtGui.QPixmap(path)
-            if pixmap.isNull():
-                continue
-            icon = QtGui.QIcon(
-                pixmap.scaled(
-                    72,
-                    72,
-                    QtCore.Qt.KeepAspectRatio,
-                    QtCore.Qt.SmoothTransformation,
-                )
-            )
-            item = QtWidgets.QListWidgetItem(icon, os.path.basename(path))
-            item.setToolTip(path)
-            item.setData(QtCore.Qt.UserRole, path)
-            self.template_thumb_list.addItem(item)
-            self._template_paths.append(path)
+            self._add_template_path(path)
         self._reposition_add_button()
+
+    def _capture_template_image(self):
+        ensure_dpi_aware()
+        name, ok = QtWidgets.QInputDialog.getText(
+            self,
+            "\u6a21\u677f\u91c7\u96c6",
+            "\u8f93\u5165\u6a21\u677f\u540d\u79f0(\u53ef\u7a7a):",
+        )
+        if not ok:
+            return
+        output_dir = _resource_path("templates")
+        path = capture_program_template(
+            output_dir, name.strip() if name else None, self._signals.log_signal.emit
+        )
+        if not path:
+            return
+        self._add_template_path(path, label_prefix="[PC] ")
+        self._signals.log_signal.emit(f"\u6a21\u677f\u91c7\u96c6\u5b8c\u6210: {path}")
+        self._reposition_add_button()
+
+    def _add_template_path(self, path, label_prefix=""):
+        existing = set(self._template_paths)
+        if path in existing:
+            return
+        pixmap = QtGui.QPixmap(path)
+        if pixmap.isNull():
+            return
+        icon = QtGui.QIcon(
+            pixmap.scaled(
+                72,
+                72,
+                QtCore.Qt.KeepAspectRatio,
+                QtCore.Qt.SmoothTransformation,
+            )
+        )
+        item = QtWidgets.QListWidgetItem(
+            icon, f"{label_prefix}{os.path.basename(path)}"
+        )
+        item.setToolTip(path)
+        item.setData(QtCore.Qt.UserRole, path)
+        self.template_thumb_list.addItem(item)
+        self._template_paths.append(path)
 
     def _remove_template_item(self, item):
         path = item.data(QtCore.Qt.UserRole)
