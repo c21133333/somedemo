@@ -6,16 +6,11 @@ import sys
 import time
 import threading
 
-import cv2
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from somedemo.action_executor import execute, execute_match, compute_click_point
+from somedemo.action_executor import execute, execute_match
 from somedemo.recorder_core import RecorderCore
-from somedemo.region_selector import (
-    select_region,
-    physical_to_logical_region,
-    get_monitor_scale_for_region,
-)
+from somedemo.region_selector import select_region
 from somedemo.scene_matcher import load_scene_rules, match_scene
 from somedemo.screen_capture import ScreenCapture
 from somedemo.template_matcher import TemplateMatcher
@@ -35,55 +30,6 @@ def _resource_path(filename):
 class UiSignals(QtCore.QObject):
     log_signal = QtCore.Signal(str)
     event_signal = QtCore.Signal(dict)
-    click_signal = QtCore.Signal(object)
-
-
-LIKE_ROI_REL = (0.05, 0.15, 0.25, 0.7)
-LIKE_BLUE_DELTA = 15
-LIKE_GRAY_THRESHOLD = 120
-
-
-class RegionOverlay(QtWidgets.QWidget):
-    def __init__(self):
-        super().__init__()
-        self.setWindowFlags(
-            QtCore.Qt.FramelessWindowHint
-            | QtCore.Qt.WindowStaysOnTopHint
-            | QtCore.Qt.Tool
-        )
-        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
-        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
-
-    def paintEvent(self, event):
-        painter = QtGui.QPainter(self)
-        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
-        pen = QtGui.QPen(QtGui.QColor(255, 80, 80), 2)
-        painter.setPen(pen)
-        painter.drawRect(self.rect().adjusted(1, 1, -1, -1))
-
-
-class ClickMarker(QtWidgets.QWidget):
-    def __init__(self):
-        super().__init__()
-        self.setWindowFlags(
-            QtCore.Qt.FramelessWindowHint
-            | QtCore.Qt.WindowStaysOnTopHint
-            | QtCore.Qt.Tool
-        )
-        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
-        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
-
-    def paintEvent(self, event):
-        painter = QtGui.QPainter(self)
-        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
-        pen = QtGui.QPen(QtGui.QColor(255, 60, 60), 2)
-        painter.setPen(pen)
-        size = min(self.width(), self.height())
-        center = QtCore.QPoint(self.width() // 2, self.height() // 2)
-        half = max(4, size // 4)
-        painter.drawLine(center.x() - half, center.y(), center.x() + half, center.y())
-        painter.drawLine(center.x(), center.y() - half, center.x(), center.y() + half)
-        painter.drawEllipse(center, half, half)
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -99,8 +45,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._signals = UiSignals()
         self._signals.log_signal.connect(self._append_log)
         self._signals.event_signal.connect(self._add_event_row)
-        self._signals.click_signal.connect(self._show_click_marker)
-
         self._log_path = self._init_log_path()
 
         self.core = RecorderCore(
@@ -126,9 +70,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._action_lock = threading.Lock()
         self._action_inflight = False
         self._capture_debug_logged = False
-        self._monitor_overlay = None
-        self._click_marker = None
-        self._monitor_scale = (1.0, 1.0)
 
         self._last_dt = None
 
@@ -279,7 +220,6 @@ class MainWindow(QtWidgets.QMainWindow):
             "QToolButton:hover { background: #16a34a; }"
         )
         self.template_add_btn.raise_()
-
         self._reposition_add_button()
 
         template_group_layout.addWidget(self.template_thumb_list)
@@ -289,9 +229,9 @@ class MainWindow(QtWidgets.QMainWindow):
         template_threshold_layout = QtWidgets.QHBoxLayout()
         threshold_label = QtWidgets.QLabel("\u6a21\u677f\u5339\u914d\u9608\u503c:")
         self.template_threshold_spin = QtWidgets.QDoubleSpinBox()
-        self.template_threshold_spin.setRange(0.90, 0.99)
+        self.template_threshold_spin.setRange(0.7, 0.95)
         self.template_threshold_spin.setSingleStep(0.01)
-        self.template_threshold_spin.setValue(0.90)
+        self.template_threshold_spin.setValue(0.85)
         template_threshold_layout.addWidget(threshold_label)
         template_threshold_layout.addWidget(self.template_threshold_spin)
         template_threshold_layout.addStretch(1)
@@ -317,7 +257,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # CHANGE: random offset toggle
         random_layout = QtWidgets.QHBoxLayout()
         self.template_random_offset = QtWidgets.QCheckBox("\u968f\u673a\u504f\u79fb\u70b9\u51fb")
-        self.template_random_offset.setChecked(False)
+        self.template_random_offset.setChecked(True)
         random_layout.addWidget(self.template_random_offset)
         random_layout.addStretch(1)
         monitor_layout.addLayout(random_layout)
@@ -338,8 +278,10 @@ class MainWindow(QtWidgets.QMainWindow):
         main_layout.addWidget(self.log_box, 0)
         log_actions = QtWidgets.QHBoxLayout()
         self.log_clear_btn = QtWidgets.QPushButton("\u6e05\u7406\u65e5\u5fd7")
+        self.settings_btn = QtWidgets.QPushButton("\u8bbe\u7f6e")
         log_actions.addStretch(1)
         log_actions.addWidget(self.log_clear_btn)
+        log_actions.addWidget(self.settings_btn)
         main_layout.addLayout(log_actions)
 
         self.start_btn.clicked.connect(self._start_recording)
@@ -363,12 +305,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self._remove_template_item
         )
         self.log_clear_btn.clicked.connect(self._clear_log)
+        self.settings_btn.clicked.connect(self._show_settings)
 
         self._bind_shortcuts()
         self._apply_theme()
         self._update_ui_state()
         if self._log_path:
-            self._append_log(f"日志文件: {self._log_path}")
+            self._append_log(f"\u65e5\u5fd7\u6587\u4ef6: {self._log_path}")
         self._register_hotkeys()
         # CHANGE: initialize mode button states
         self._show_monitor_mode()
@@ -617,7 +560,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.template_threshold_spin.setEnabled(can_edit_templates)
         self.template_click_count.setEnabled(can_edit_templates)
         self.template_click_interval.setEnabled(can_edit_templates)
-        self.template_random_offset.setEnabled(False)
+        self.template_random_offset.setEnabled(can_edit_templates)
         self.monitor_fps_spin.setEnabled(can_edit_templates)
         self.template_thumb_list.setEnabled(can_edit_templates)
 
@@ -631,6 +574,15 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 pass
 
+    def _init_log_path(self):
+        base_dir = _resource_path("")
+        log_dir = os.path.join(base_dir, "logs")
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+        except Exception:
+            return None
+        return os.path.join(log_dir, "app.log")
+
     def _clear_log(self):
         self.log_box.clear()
         if self._log_path:
@@ -640,38 +592,43 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 pass
 
-    def _is_liked(self, frame, match) -> bool:
-        x = int(match.get("x", 0))
-        y = int(match.get("y", 0))
-        w = int(match.get("width", 0))
-        h = int(match.get("height", 0))
-        if w <= 0 or h <= 0:
-            return False
-        rel_x, rel_y, rel_w, rel_h = LIKE_ROI_REL
-        roi_x = x + int(round(w * rel_x))
-        roi_y = y + int(round(h * rel_y))
-        roi_w = max(5, int(round(w * rel_w)))
-        roi_h = max(5, int(round(h * rel_h)))
-        roi = frame[roi_y : roi_y + roi_h, roi_x : roi_x + roi_w]
-        if roi.size == 0:
-            return False
-        mean_bgr = roi.mean(axis=(0, 1))
-        mean_b = float(mean_bgr[0])
-        mean_g = float(mean_bgr[1])
-        mean_r = float(mean_bgr[2])
-        gray_mean = float(cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY).mean())
-        is_blue = mean_b > mean_r + LIKE_BLUE_DELTA and mean_b > mean_g + 10
-        is_bright = gray_mean >= LIKE_GRAY_THRESHOLD
-        return bool(is_blue and is_bright)
+    def _show_settings(self):
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("\u8bbe\u7f6e")
+        layout = QtWidgets.QVBoxLayout(dialog)
+        form = QtWidgets.QFormLayout()
+        layout.addLayout(form)
 
-    def _init_log_path(self):
-        base_dir = _resource_path("")
-        log_dir = os.path.join(base_dir, "logs")
-        try:
-            os.makedirs(log_dir, exist_ok=True)
-        except Exception:
-            return None
-        return os.path.join(log_dir, "app.log")
+        log_path = self._log_path or ""
+        capture_dir = os.path.abspath(_resource_path("templates"))
+
+        log_row = QtWidgets.QHBoxLayout()
+        log_edit = QtWidgets.QLineEdit(log_path)
+        log_edit.setReadOnly(True)
+        log_copy = QtWidgets.QPushButton("\u590d\u5236")
+        log_row.addWidget(log_edit)
+        log_row.addWidget(log_copy)
+        form.addRow("\u65e5\u5fd7\u8def\u5f84:", log_row)
+
+        capture_row = QtWidgets.QHBoxLayout()
+        capture_edit = QtWidgets.QLineEdit(capture_dir)
+        capture_edit.setReadOnly(True)
+        capture_copy = QtWidgets.QPushButton("\u590d\u5236")
+        capture_row.addWidget(capture_edit)
+        capture_row.addWidget(capture_copy)
+        form.addRow("\u7a0b\u5e8f\u622a\u56fe\u76ee\u5f55:", capture_row)
+
+        btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
+        btns.rejected.connect(dialog.reject)
+        layout.addWidget(btns)
+
+        def copy_text(value: str):
+            QtWidgets.QApplication.clipboard().setText(value or "")
+
+        log_copy.clicked.connect(lambda: copy_text(log_edit.text()))
+        capture_copy.clicked.connect(lambda: copy_text(capture_edit.text()))
+
+        dialog.exec()
 
     def _set_row_item(self, row, col, value):
         item = QtWidgets.QTableWidgetItem(value)
@@ -780,10 +737,7 @@ class MainWindow(QtWidgets.QMainWindow):
         region = select_region()
         if region:
             self._auto_region = region
-            self._monitor_scale = get_monitor_scale_for_region(region)
             self._signals.log_signal.emit(f"\u81ea\u52a8\u76d1\u63a7\u533a\u57df: {region}")
-            if self._auto_running:
-                self._show_monitor_overlay()
 
     def _load_scene_rules(self):
         if not os.path.exists(self._scene_rules_path):
@@ -807,9 +761,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._template_matcher = TemplateMatcher.load_from_paths(
             self._template_paths, threshold=threshold
         )
-        self._signals.log_signal.emit(
-            f"\u6a21\u677f\u5339\u914d\u9608\u503c: {threshold:.2f} mode={self._template_matcher.match_mode()}"
-        )
         summary = self._template_matcher.describe()
         if summary:
             items = ", ".join(
@@ -817,16 +768,6 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             self._signals.log_signal.emit(f"\u6a21\u677f\u5c3a\u5bf8: {items}")
         return True
-
-    def _select_template_source(self):
-        menu = QtWidgets.QMenu(self)
-        local_action = menu.addAction("\u4ece\u672c\u5730\u9009\u62e9\u56fe\u7247")
-        capture_action = menu.addAction("\u7a0b\u5e8f\u622a\u56fe\u91c7\u96c6")
-        action = menu.exec(self.template_add_btn.mapToGlobal(QtCore.QPoint(0, 40)))
-        if action == local_action:
-            self._select_template_images()
-        elif action == capture_action:
-            self._capture_template_image()
 
     def _select_template_images(self):
         paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
@@ -840,6 +781,16 @@ class MainWindow(QtWidgets.QMainWindow):
         for path in paths:
             self._add_template_path(path)
         self._reposition_add_button()
+
+    def _select_template_source(self):
+        menu = QtWidgets.QMenu(self)
+        local_action = menu.addAction("\u4ece\u672c\u5730\u9009\u62e9\u56fe\u7247")
+        capture_action = menu.addAction("\u7a0b\u5e8f\u622a\u56fe\u91c7\u96c6")
+        action = menu.exec(self.template_add_btn.mapToGlobal(QtCore.QPoint(0, 40)))
+        if action == local_action:
+            self._select_template_images()
+        elif action == capture_action:
+            self._capture_template_image()
 
     def _capture_template_image(self):
         ensure_dpi_aware()
@@ -920,7 +871,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self._select_auto_region()
         if not self._auto_region:
             return
-        self._monitor_scale = get_monitor_scale_for_region(self._auto_region)
         scene_ok = self._load_scene_rules()
         template_ok = self._load_template_matcher()
         if not scene_ok and not template_ok:
@@ -933,7 +883,6 @@ class MainWindow(QtWidgets.QMainWindow):
             frame_callback=self._on_frame,
         )
         self._capture_debug_logged = False
-        self._show_monitor_overlay()
         self._auto_capture.start()
         self._auto_running = True
         self._signals.log_signal.emit("\u81ea\u52a8\u76d1\u63a7\u5df2\u5f00\u59cb\u3002")
@@ -956,7 +905,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self._auto_capture = None
         self._auto_running = False
         self._auto_paused = False
-        self._hide_monitor_overlay()
         self._signals.log_signal.emit("\u81ea\u52a8\u76d1\u63a7\u5df2\u505c\u6b62\u3002")
         self._update_ui_state()
 
@@ -970,15 +918,6 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             self._capture_debug_logged = True
         if self._template_matcher:
-            best = self._template_matcher.best_confidence(frame)
-            if best:
-                abs_x = best.get("x", 0) + (self._auto_region[0] if self._auto_region else 0)
-                abs_y = best.get("y", 0) + (self._auto_region[1] if self._auto_region else 0)
-                self._signals.log_signal.emit(
-                    f"\u6bcf\u5e27\u6700\u4f73\u5339\u914d: {best['name']} conf={best['confidence']:.3f} gray={best.get('gray_conf', -1.0):.3f} edge={best.get('edge_conf', -1.0):.3f} mode={self._template_matcher.match_mode()} scale={best.get('scale', 1.0):.2f} at=({best.get('x', 0)},{best.get('y', 0)}) abs=({abs_x},{abs_y})"
-                )
-            else:
-                self._signals.log_signal.emit("\u6bcf\u5e27\u6700\u4f73\u5339\u914d: \u65e0\u53ef\u7528\u6a21\u677f")
             match = self._template_matcher.match(frame)
             if match:
                 if not match.get("click"):
@@ -986,24 +925,12 @@ class MainWindow(QtWidgets.QMainWindow):
                         "type": "left",
                         "click_count": int(self.template_click_count.value()),
                         "interval_ms": int(self.template_click_interval.value()),
+                        "random_offset": bool(self.template_random_offset.isChecked()),
                         "delay_ms": 0,
                         "cooldown_ms": 0,
-                        "coord_scale": tuple(self._monitor_scale),
                     }
-                if self._is_liked(frame, match):
-                    self._signals.log_signal.emit(
-                        f"\u6a21\u677f\u547d\u4e2d: {match['name']} \u5df2\u70b9\u8d5e\uff0c\u8df3\u8fc7\u70b9\u51fb\u3002"
-                    )
-                    return
-                click_point = compute_click_point(match, self._auto_region, match["click"])
                 self._signals.log_signal.emit(
-                    f"\u6b63\u5728\u70b9\u51fb: {match['name']} at={click_point}"
-                )
-                self._signals.click_signal.emit(click_point)
-                abs_x = match.get("x", 0) + (self._auto_region[0] if self._auto_region else 0)
-                abs_y = match.get("y", 0) + (self._auto_region[1] if self._auto_region else 0)
-                self._signals.log_signal.emit(
-                    f"\u6a21\u677f\u547d\u4e2d: {match['name']} conf={match['confidence']:.3f} gray={match.get('gray_conf', -1.0):.3f} edge={match.get('edge_conf', -1.0):.3f} mode={self._template_matcher.match_mode()} scale={match.get('scale', 1.0):.2f} at=({match.get('x', 0)},{match.get('y', 0)}) abs=({abs_x},{abs_y})"
+                    f"\u6a21\u677f\u547d\u4e2d: {match['name']} conf={match['confidence']:.3f}"
                 )
 
                 def run_template_action():
@@ -1012,11 +939,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             return
                         self._action_inflight = True
                     try:
-                        ok = execute_match(match, self._auto_region)
-                        if not ok:
-                            self._signals.log_signal.emit("\u6a21\u677f\u70b9\u51fb\u6267\u884c\u5931\u8d25\u3002")
-                    except Exception as exc:
-                        self._signals.log_signal.emit(f"\u6a21\u677f\u70b9\u51fb\u5f02\u5e38: {exc}")
+                        execute_match(match, self._auto_region)
                     finally:
                         with self._action_lock:
                             self._action_inflight = False
@@ -1047,11 +970,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     return
                 self._action_inflight = True
             try:
-                ok = execute(action_config)
-                if not ok:
-                    self._signals.log_signal.emit("\u52a8\u4f5c\u6267\u884c\u5931\u8d25\u3002")
-            except Exception as exc:
-                self._signals.log_signal.emit(f"\u52a8\u4f5c\u6267\u884c\u5f02\u5e38: {exc}")
+                execute(action_config)
             finally:
                 with self._action_lock:
                     self._action_inflight = False
@@ -1063,33 +982,6 @@ class MainWindow(QtWidgets.QMainWindow):
         # CHANGE: stop automation cleanly
         self._stop_auto()
         super().closeEvent(event)
-
-    def _show_monitor_overlay(self):
-        logical = physical_to_logical_region(self._auto_region)
-        if not logical:
-            return
-        if not self._monitor_overlay:
-            self._monitor_overlay = RegionOverlay()
-        self._monitor_overlay.setGeometry(*logical)
-        self._monitor_overlay.show()
-        self._monitor_overlay.raise_()
-
-    def _hide_monitor_overlay(self):
-        if self._monitor_overlay:
-            self._monitor_overlay.hide()
-
-    def _show_click_marker(self, point):
-        if not point or len(point) != 2:
-            return
-        x, y = int(point[0]), int(point[1])
-        size = 24
-        if not self._click_marker:
-            self._click_marker = ClickMarker()
-            self._click_marker.setFixedSize(size, size)
-        self._click_marker.move(x - size // 2, y - size // 2)
-        self._click_marker.show()
-        self._click_marker.raise_()
-        QtCore.QTimer.singleShot(250, self._click_marker.hide)
 
 
 def run():

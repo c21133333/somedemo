@@ -8,83 +8,11 @@ import numpy as np
 
 TemplateConfig = Dict[str, Any]
 MatchResult = Dict[str, Any]
-EDGE_LOW = 50
-EDGE_HIGH = 150
-USE_EDGE_MATCH = True
-MATCH_MODE = "gray+edge(max)"
-BLUR_KERNEL = (3, 3)
-BLUR_SIGMA = 0
-
-
-def _edge(image: np.ndarray) -> np.ndarray:
-    gray = _to_gray(image)
-    return cv2.Canny(gray, EDGE_LOW, EDGE_HIGH)
-
-
-def _to_gray(image: np.ndarray) -> np.ndarray:
-    if image.ndim == 3:
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    return cv2.GaussianBlur(image, BLUR_KERNEL, BLUR_SIGMA)
-
-
-def _normalize_threshold(value: float) -> float:
-    return max(0.9, min(1.0, float(value)))
 
 
 class TemplateMatcher:
     def __init__(self, templates: List[TemplateConfig]):
         self._templates = templates
-
-    def match_mode(self) -> str:
-        if USE_EDGE_MATCH:
-            return MATCH_MODE
-        return "gray"
-
-    def best_confidence(self, frame: np.ndarray) -> Optional[MatchResult]:
-        frame_gray = _to_gray(frame)
-        frame_edge = _edge(frame_gray) if USE_EDGE_MATCH else None
-        best = None
-        for tmpl in self._templates:
-            template_gray = tmpl.get("gray")
-            if template_gray is None:
-                continue
-            if (
-                frame_gray.shape[0] < template_gray.shape[0]
-                or frame_gray.shape[1] < template_gray.shape[1]
-            ):
-                continue
-            result = cv2.matchTemplate(
-                frame_gray, template_gray, cv2.TM_CCOEFF_NORMED
-            )
-            _, gray_val, _, max_loc = cv2.minMaxLoc(result)
-            edge_val = -1.0
-            edge_loc = max_loc
-            if USE_EDGE_MATCH and frame_edge is not None:
-                edge_scaled = _edge(template_gray)
-                if (
-                    frame_edge.shape[0] >= edge_scaled.shape[0]
-                    and frame_edge.shape[1] >= edge_scaled.shape[1]
-                ):
-                    edge_res = cv2.matchTemplate(
-                        frame_edge, edge_scaled, cv2.TM_CCOEFF_NORMED
-                    )
-                    _, edge_val, _, edge_loc = cv2.minMaxLoc(edge_res)
-            use_edge = edge_val > gray_val
-            conf = float(edge_val if use_edge else gray_val)
-            pick_loc = edge_loc if use_edge else max_loc
-            if not best or conf > best["confidence"]:
-                best = {
-                    "name": tmpl.get("name", ""),
-                    "confidence": conf,
-                    "gray_conf": float(gray_val),
-                    "edge_conf": float(edge_val),
-                    "x": int(pick_loc[0]),
-                    "y": int(pick_loc[1]),
-                    "width": int(template_gray.shape[1]),
-                    "height": int(template_gray.shape[0]),
-                    "scale": 1.0,
-                }
-        return best
 
     def describe(self) -> List[Dict[str, int]]:
         summary: List[Dict[str, int]] = []
@@ -103,7 +31,7 @@ class TemplateMatcher:
 
     @classmethod
     def load_from_paths(
-        cls, paths: List[str], threshold: float = 0.9
+        cls, paths: List[str], threshold: float = 0.85
     ) -> "TemplateMatcher":
         templates = []
         for path in paths:
@@ -115,9 +43,7 @@ class TemplateMatcher:
                 {
                     "name": name,
                     "image": image,
-                    "gray": _to_gray(image),
-                    "edge": _edge(image),
-                    "threshold": _normalize_threshold(threshold),
+                    "threshold": float(threshold),
                     "click": {},
                 }
             )
@@ -146,59 +72,30 @@ class TemplateMatcher:
                 {
                     "name": name,
                     "image": image,
-                    "gray": _to_gray(image),
-                    "edge": _edge(image),
-                    "threshold": _normalize_threshold(item.get("threshold", 0.9)),
+                    "threshold": float(item.get("threshold", 0.85)),
                     "click": dict(item.get("click", {})),
                 }
             )
         return cls(templates)
 
     def match(self, frame: np.ndarray) -> Optional[MatchResult]:
-        frame_gray = _to_gray(frame)
-        frame_edge = _edge(frame_gray) if USE_EDGE_MATCH else None
         best = None
         for tmpl in self._templates:
-            template_gray = tmpl.get("gray")
-            if template_gray is None:
+            template = tmpl["image"]
+            if frame.shape[0] < template.shape[0] or frame.shape[1] < template.shape[1]:
                 continue
-            if (
-                frame_gray.shape[0] < template_gray.shape[0]
-                or frame_gray.shape[1] < template_gray.shape[1]
-            ):
+            result = cv2.matchTemplate(frame, template, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(result)
+            if max_val < tmpl["threshold"]:
                 continue
-            result = cv2.matchTemplate(
-                frame_gray, template_gray, cv2.TM_CCOEFF_NORMED
-            )
-            _, gray_val, _, max_loc = cv2.minMaxLoc(result)
-            edge_val = -1.0
-            edge_loc = max_loc
-            if USE_EDGE_MATCH and frame_edge is not None:
-                edge_scaled = _edge(template_gray)
-                if (
-                    frame_edge.shape[0] >= edge_scaled.shape[0]
-                    and frame_edge.shape[1] >= edge_scaled.shape[1]
-                ):
-                    edge_res = cv2.matchTemplate(
-                        frame_edge, edge_scaled, cv2.TM_CCOEFF_NORMED
-                    )
-                    _, edge_val, _, edge_loc = cv2.minMaxLoc(edge_res)
-            use_edge = edge_val > gray_val
-            conf = float(edge_val if use_edge else gray_val)
-            pick_loc = edge_loc if use_edge else max_loc
-            if conf < tmpl["threshold"]:
-                continue
-            if not best or conf > best["confidence"]:
+            if not best or max_val > best["confidence"]:
                 best = {
                     "name": tmpl["name"],
-                    "confidence": conf,
-                    "gray_conf": float(gray_val),
-                    "edge_conf": float(edge_val),
-                    "x": int(pick_loc[0]),
-                    "y": int(pick_loc[1]),
-                    "width": int(template_gray.shape[1]),
-                    "height": int(template_gray.shape[0]),
-                    "scale": 1.0,
+                    "confidence": float(max_val),
+                    "x": int(max_loc[0]),
+                    "y": int(max_loc[1]),
+                    "width": int(template.shape[1]),
+                    "height": int(template.shape[0]),
                     "click": dict(tmpl.get("click", {})),
                 }
         return best

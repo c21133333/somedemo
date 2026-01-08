@@ -26,10 +26,7 @@ class RegionSelector(QtWidgets.QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        screen = QtGui.QGuiApplication.primaryScreen()
-        if screen:
-            self.setGeometry(screen.virtualGeometry())
-        self.show()
+        self.showFullScreen()
 
     def paintEvent(self, event):
         painter = QtGui.QPainter(self)
@@ -58,10 +55,7 @@ class RegionSelector(QtWidgets.QWidget):
         self._rubber_band.hide()
         self._origin = None
         if rect.width() > 0 and rect.height() > 0:
-            global_rect = QtCore.QRect(
-                rect.topLeft() + self.geometry().topLeft(), rect.size()
-            )
-            region = self._to_physical_region(global_rect)
+            region = self._to_physical_region(rect)
             self.region_selected.emit(region)
         self.close()
 
@@ -74,35 +68,22 @@ class RegionSelector(QtWidgets.QWidget):
         super().closeEvent(event)
 
     def _to_physical_region(self, rect: QtCore.QRect) -> Tuple[int, int, int, int]:
-        win_region = _logical_to_physical_region(rect, int(self.winId()))
-        if win_region:
-            return win_region
-        screen = _resolve_screen_for_rect(rect)
+        screen = self.screen()
         if not screen:
             return rect.x(), rect.y(), rect.width(), rect.height()
-        screen_geom = screen.geometry()
-        screen_size = screen_geom.size()
+        screen_size = screen.size()
         if screen_size.width() <= 0 or screen_size.height() <= 0:
             return rect.x(), rect.y(), rect.width(), rect.height()
-        physical = _match_physical_rect_for_screen(screen)
-        if physical:
-            left, top, width, height = physical
-            scale_x = width / max(1, screen_size.width())
-            scale_y = height / max(1, screen_size.height())
-            rel_x = rect.x() - screen_geom.x()
-            rel_y = rect.y() - screen_geom.y()
-            phys_x = left + int(round(rel_x * scale_x))
-            phys_y = top + int(round(rel_y * scale_y))
-            phys_w = int(round(rect.width() * scale_x))
-            phys_h = int(round(rect.height() * scale_y))
-            return phys_x, phys_y, phys_w, phys_h
-        dpr = float(getattr(screen, "devicePixelRatio", lambda: 1.0)() or 1.0)
-        rel_x = rect.x() - screen_geom.x()
-        rel_y = rect.y() - screen_geom.y()
-        phys_x = int(round(screen_geom.x() * dpr + rel_x * dpr))
-        phys_y = int(round(screen_geom.y() * dpr + rel_y * dpr))
-        phys_w = int(round(rect.width() * dpr))
-        phys_h = int(round(rect.height() * dpr))
+        physical = _get_monitor_physical_rect(screen.name())
+        if not physical:
+            return rect.x(), rect.y(), rect.width(), rect.height()
+        left, top, width, height = physical
+        scale_x = width / max(1, screen_size.width())
+        scale_y = height / max(1, screen_size.height())
+        phys_x = left + int(round(rect.x() * scale_x))
+        phys_y = top + int(round(rect.y() * scale_y))
+        phys_w = int(round(rect.width() * scale_x))
+        phys_h = int(round(rect.height() * scale_y))
         return phys_x, phys_y, phys_w, phys_h
 
 
